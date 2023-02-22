@@ -1,0 +1,455 @@
+---
+title: "Hospitals in USA"
+author: "Team 30"
+date: "2023-02-12"
+output: html_document
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction & Problem Statement
+The healthcare industry generates a vast amount of data, including information about patient care, hospital operations, and financial performance. The purpose of this project is to provide a comprehensive understanding of the quality of care provided by different hospitals in the US and their operational efficiency. We will be using various data sources to examine factors such as overall ratings, maximum capacity, readmission rates, mortality rates, staffing levels, and more. The insights generated from this analysis will be visualized using state-of-the-art data visualization techniques, making it easy to understand and comprehend. The visual representations will provide a clear picture of the current state of the US healthcare system and will help identify areas for improvement.
+
+Whether you are a healthcare provider, policymaker, or patient, this project will provide valuable information that can be used to make informed decisions about the quality of care available in different regions of the country. The report is divided into 3 parts that weave a story and provide insights into the healthcare industry in the US, especially the Hospitals:
+
+**1. Location of Hospitals:** How are the Hospitals distributed across the country
+
+**2. Resources in Hospitals:** Whom do the hospitals belong to and what facilities do they provide
+
+**3. Quality of Hospitals:** How are the hospitals rated and what factors affect their rating
+
+## About the data sets
+The data set provided to us contains a list of over 7.5k hospitals in the USA with their latitude, longitude, city, county, state, type, ownership, capacity, etc. Since the data set lacks numerical content barring the capacity of hospitals (number of beds), we chose to refer to the following external data sets: 
+
+**1. hospitals_general_info:** In addition to the names and the states of the hospital which we can use to merge this data set to the original one, this data set also contains six attributes and the overall ratings of the hospitals, which helps us determine the quality of hospitals.
+
+**2. population_data:** For all the 50 states in USA, this data set gives us the total population and the population density for them. This helps us compare the distribution and count of hospitals with respect to the population density of the state.
+
+**3. cms_hospital_patient_satisfaction_2016:** This data set provides us with the customer reviews of the hospitals in US. Using that we can correlate the reviews to the overall ratings of the hospitals.
+
+```{r Library Initialization, echo=FALSE, results='hide', include=FALSE, message=FALSE}
+#install_github("ricardo-bion/ggradar", dependencies=TRUE)
+library(dplyr)    
+library(magrittr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+library(corrplot)
+library(ggalluvial)
+library(scales)
+library(treemapify)
+library(plotly)
+library(usmap)
+library(ggmap)
+library(viridis)
+library(htmlwidgets)
+library(htmltools)
+library(leaflet)
+library(devtools)
+library(ggradar)
+```
+
+```{r Data Extraction, echo=FALSE, message=FALSE}
+hospitals_raw <- read.csv('hospitals.csv', na.strings = "")
+hospitals_gi_raw <- read.csv('hospitals_info.csv', na.strings = "")
+population <- read.csv('population_data.csv', na.strings = "")
+cms <- read.csv("cms_hospital_patient_satisfaction_2016.csv")
+
+```
+
+```{r Data Wrangling, echo=FALSE, message=FALSE}
+#For hospitals dataset
+#dropping columns that are redundant
+hospitals_cols <- hospitals_raw[-c(1,2,6,10,11,14,16,20,23:28,31,33,34)]
+
+#dropping NA values
+#converting NOT AVAILABLE and -999 values to NA
+hospitals_na <- na_if(hospitals_cols, "NOT AVAILABLE")
+
+hospitals_na <- na_if(hospitals_cols, "-999")
+
+#removing rows with NA values
+hospitals <- na.omit(hospitals_na)
+
+#For hospitals_info dataset
+#dropping columns that are redundant
+hospitals_gi_cols <- hospitals_gi_raw[-c(1,2,4,5,6,7,8,9,10,11,13,15,17,19,21,23,25,27,29,30)]
+
+#dropping NA values
+#converting NOT AVAILABLE to NA
+hospitals_gi_na <- na_if(hospitals_gi_cols, "Not Available")
+hospitals_gi <- na.omit(hospitals_gi_na)
+
+#Merging the two datasets
+hospitals_merge <- left_join(hospitals, hospitals_gi, by=c("NAME"="Hospital.Name"))
+
+#For population_data dataset
+#dropping columns that are redundant
+population <- population[-c(1,5,6,7,8,9,10,11,13,14)]
+
+#For cms_hospital_patient_satisfaction_2016 dataset
+#dropping columns that are redundant
+cms <- cms[-c(1,3:9,11,13:43)]
+
+#dropping NA values
+#converting Nit Available and Not Applicable to NA
+cms <- na_if(cms, "Not Available")
+cms <- na_if(cms, "Not Applicable")
+
+#removing rows with NA values
+cms <- na.omit(cms)
+```
+
+
+## Section 1: Location of Hospitals
+
+### Q1.1 What is the distribution count of hospitals state-wise across USA 
+```{r Choropleth, echo=FALSE, message=FALSE}
+#Plotting the US map
+hospitals_groups <- hospitals %>% group_by(STATE) %>% summarize(Count_of_hospitals=n()) %>% arrange(desc(Count_of_hospitals))
+
+colnames(hospitals_groups) <- c('state', 'Count_of_hospitals')
+
+plot_usmap(data = hospitals_groups, values = "Count_of_hospitals",
+           regions = "states", labels=TRUE) +
+scale_fill_gradientn(colours=c("#FDE725", "#5ec962", "#21918c", "#3b528b", "#440154" )) + 
+labs(title = "Fig. 1.1 Count of hospitals by state") +
+theme(legend.position = "right", title=element_text(size=10, face='bold'))
+```
+
+#### Inference 1.1
+A choropleth map is a thematic map that is used to represent statistical data using the color mapping technique. It displays enumeration units, or divided geographical areas or regions that are colored, shaded or patterned in relation to a data variable. From this choropleth map it is evident that Texas has the highest number of hospitals. The state of California has the second most number of hospitals in the USA.
+
+### Q1.2 Where are the hospitals with an emergencey ward across the State with the most number of Hospitals derived from Q1.1? Also show the capacity of all hospitals.
+
+### Fig. 1.2 Hospitals in Texas
+```{r Leaflet, echo=FALSE, message=FALSE}
+tag.map.title <- tags$style(HTML("
+  .leaflet-control.map-title { 
+    transform: translate(-50%,20%);
+    position: fixed !important;
+    left: 50%;
+    text-align: center;
+    padding-left: 10px; 
+    padding-right: 10px; 
+    background: rgba(255,255,255,0.75);
+    font-weight: bold;
+    font-size: 28px;
+    color: black;
+  }
+"))
+
+title <- tags$div(
+  tag.map.title, HTML("Fig. 1.2 Hospitals in Texas")
+) 
+
+hospital_tx <- hospitals_merge %>%
+  filter(STATE %in% c("TX")) %>%
+  filter(Emergency.Services== TRUE)
+
+leaflet(data = hospital_tx) %>%
+  addTiles() %>%
+  addMarkers(~LONGITUDE, ~LATITUDE, popup = ~as.character(BEDS), label = ~as.character(BEDS)) %>%
+  addControl(title, position = "topleft", className="map-title")
+```
+
+
+
+#### Inference 1.2
+Leaflet is an open-source JavaScript library that is used to create dynamic online maps. The identically named R package makes it possible to create these kinds of maps in R as well. Here we use the leaflet map to pin down the specific location of hospitals with an emergency ward in the state with the most number of hospitals, i.e., Texas. The University Hospital in San Antonio has the most number of beds (most capacity of 1034). On a high level it is observed that the most number of required hospitals are in the city of Dallas followed by Houston.
+
+### Q1.3 Who owns the hospitals in the top four states with the most number of hospitals and how many hospitals do each of them own?
+
+```{r Grouped Bar Chart, echo=FALSE, message=FALSE}
+hospitals_OWNERS <- hospitals %>%
+  select(ID, NAME, CITY, STATE, ZIP, TYPE, STATUS, COUNTY,
+         COUNTRY, LATITUDE, LONGITUDE, NAICS_DESC,OWNER, BEDS) %>%
+  filter(STATE %in% c("TX", "CA", "FL", "OH") & !OWNER %in% c('NOT AVAILABLE')) 
+
+hospitals_OWNERS <- hospitals_OWNERS %>% group_by(STATE, OWNER) %>% 
+  dplyr::summarize(Count_of_hospitals=n()) 
+
+fig <-  plot_ly(data=hospitals_OWNERS, type= "bar", x = ~STATE,  
+                y = ~Count_of_hospitals, color = ~OWNER, colors = viridis_pal(direction=1, option="D")(5))  %>% 
+layout(xaxis = list(categoryorder = "total ascending"))
+
+fig <- fig %>% layout(title = "Fig. 1.3 Distribution by ownership of top 4 states",
+         xaxis = list(title = ""),
+         yaxis = list(title = ""))
+
+fig
+```
+
+#### Inference 1.3
+The grouped bar chart gives us a comparison of the count of hospitals which are grouped by states and then grouped by their ownership. It is observed that the four states with the most number of hospitals are Texas, California, Florida and Ohio in that order. 436 of the hospitals in Texas and 155 in Florida are proprietary and own the most hospitals in those states. On the other hand, 284 of the hospitals in California and 171 of them in Ohio are run by non-profit organizations. We can also infer that the Government owned hospitals are the least in number in the four states with the most hospitals.
+
+## Section 2: Resources in Hospitals
+
+### Q2.1 What are the different types of hospitals and what percentage do they comprise of the total hospitals in USA?
+
+```{r Pie Chart, echo=FALSE, message=FALSE}
+hospitals_type <- hospitals %>% group_by(TYPE) %>% summarize(Count_of_type=n())
+
+Pie_chart <- plot_ly(hospitals_type, labels = ~factor(TYPE), values = ~Count_of_type, type = 'pie', 
+     marker = list(colors = c( "#2c728e","#472d7b", "#addc30","#fde725"
+            ,"#28ae80", "#440154","#5ec962","#21918c","#3b528b")
+           , line = list(color = "white", width = 0.2))
+              ,textposition = 'outside', textinfo = 'label+percent', hoverinfo = 'label', showlegend = TRUE)
+
+
+Pie_chart <- Pie_chart %>% layout(title = 'Fig. 2.1 Number of hospitals by type',
+                      xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                      yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+Pie_chart
+```
+
+#### Inference 2.1
+The pie chart or the circle chart, is a way of summarizing a set of nominal data or displaying the different values of a given variable (e.g. percentage distribution in this case). Here we can observe how all the hospitals in US are classified according to the 10 types mentioned in the data set. It is obvious from the chart that 61.7% of the hospitals in USA belong to the General Acute Care type. The second most common type of hospitals are Critical Access with 14.3% of the total count. The Chronic Disease type hospitals are least in number in USA with only a share of 0.217% of the total population.
+
+### Q2.2 What is the distribution of hospital capacity according to ownership?
+
+```{r Stacked Area, echo=FALSE, message=FALSE}
+## Adding percentile labels <labels = percent_format()>
+stacked_area <- ggplot(hospitals, aes(x = BEDS, fill=OWNER)) +
+           geom_area(stat="bin",position="fill", na.rm=TRUE) +
+    scale_fill_manual(values = c("#fde725","#addc30","#5ec962","#28ae80",
+              "#21918c", "#2c728e","#3b528b","#472d7b"
+            , "#440154")) +
+           scale_y_continuous(labels = percent_format()) +
+  
+          ggtitle("Fig. 2.2 Stacked Area Graph for Comparison + Part to Whole")
+stacked_area
+```
+
+#### Inference 2.2
+A stacked area chart is the extension of a basic area chart. It displays the evolution of the value of several groups on the same graphic. The stacked area chart here shows us the count of beds that the hospitals have, which are grouped by their ownership. It is evident that the hospitals that are owned by non-profit organizations and state governments have the most number of beds in the country.
+
+### Q2.3    ?
+
+```{r Scatterplot, echo=FALSE, message=FALSE}
+#Changing column names for uniformity
+colnames(population) <- c("STATE", "densityMi", "pop2023", "area")
+colnames(hospitals_groups) <- c("STATE", "Count_of_hospitals")
+
+#Changing the STATE column values in population into abbreviations to match the data in the Hospitals dataframe
+population$STATE <- state.abb[match(population$STATE,state.name)]
+
+#Joining the hospitals_groups with the population dataframe
+df_joined <- hospitals_groups %>% left_join(population, by='STATE')
+
+#Scatter plot
+fig <- plot_ly(df_joined, x = ~densityMi, y = ~Count_of_hospitals, text= ~STATE, type = 'scatter', mode = 'markers', hovertemplate = paste('<br><b>State</b>: %{text}<br>',
+                        '<br><b>Population Density</b>: %{x}<br>',
+                        '<br><b>No. of hospitals</b>: %{y}<br>')) %>% add_markers() %>% add_text(textposition = "top right") %>% layout(showlegend = FALSE, title = 'Fig. 2.3 Population desnity vs Number of hospitals')
+
+fig
+```
+
+
+#### Inference 2.3
+A scatter plot shows the relationship between two quantitative variables measured for the same individuals. From the plot it is evident that the state of Texas has the highest hospital to population density ratio - meaning it is the state with the highest number of hospitals per population density in the area. On the other hand, the state of New Jersey has the lowest hospital count to population density ratio with number of hospitals equal to 135 and a population density of 1283.4, which is the worst case.
+
+### Q2.4 In addition to Q2.3 what is the cummulative sum of beds in hospitals in states versus the population density in USA?
+
+```{r Bubble Chart, echo=FALSE, message=FALSE}
+temp <- hospitals %>%
+  select(STATE, BEDS) %>%
+  group_by(STATE) %>%
+  summarise(total_beds=sum(BEDS), .groups="drop")
+
+#Joining the hospitals_groups with the population dataframe
+bubble <- left_join(temp, population, by="STATE") %>%
+  select(STATE, pop2023, total_beds)
+
+b <- ggplot(bubble, aes(x = STATE, y = pop2023, color = total_beds, size=total_beds)) +
+  geom_point() +
+  scale_size(name = "Size", range = c(1, 10)) + scale_color_gradientn(colors = c("#fde725","#addc30","#5ec962","#28ae80",
+              "#21918c", "#2c728e","#3b528b","#472d7b", "#440154")) + ggtitle("Fig. 2.4 Bubble chart indicating the number of beds per state") + scale_y_continuous(labels = label_comma(suffix="M", scale=1e-6)) + theme(axis.text.x = element_text(angle = 90))
+              
+ggplotly(b, tooltip=c("x", "y"))
+```
+
+#### Inference 2.4
+A bubble chart is primarily used to depict and show relationships between numeric variables. In this case we can observe 3 data points - total capacity in the states (total beds in the hospitals in the state), population density and the states. In line with the inference from 2.3, again we can see that Texas has the most number of beds for the population density of Texas.
+
+
+## Section 3: Quality of Hospitals
+
+### Q3.1 How are the values of attributes like mortality, effectiveness of care, timeliness of care, readmission, patient experience and safety of care contributing to the overall rating of the hospital?
+
+```{r Alluvial, echo=FALSE, message=FALSE}
+hospitals_alluvial <- hospitals_merge %>%
+  pivot_longer(cols = 20:25, names_to = "Attributes", values_to = "Attribute_Value") %>%
+  group_by(Attributes,Hospital.overall.rating, Attribute_Value) %>%
+  summarize(freq=n(), .groups = "drop") %>%
+  drop_na()
+  
+ggplot(data = hospitals_alluvial,
+       aes(axis1 = Attributes, axis2 = Hospital.overall.rating, y = freq)) +
+  geom_alluvium(aes(fill = Attribute_Value),
+                curve_type = "sine") +
+scale_fill_manual(values = c("#fde725","#28ae80" , "#440154")) +
+  geom_stratum() + ggfittext::geom_fit_text(stat = "stratum", width = 1/4, min.size = 0, label= c("Timeliness of care", "Safety of care", "Readmission", "Patient experience", "Mortality", "Effectiveness of care", "5", "4", "3", "2", "1")) + scale_x_discrete(limits = c("Attributes", "Rating"), expand = c(0.15, 0.05)) + ggtitle("Fig. 3.1 Attributes and their affect on hospital ratings")
+```
+
+#### Inference 3.1
+Alluvial chart shows us the patterns and trends in our data set. In the above alluvial chart, on a high level it is observed that all the six attributes contribute equally to the overall rating of the hospitals. With a more keen look we can  see that readmission contributes the most to the overall rating of the hospital with most of the five star rated hospitals having above national average readmission rates.
+
+### Q3.2 What is the correlation between the customer reviews and the overall rating of the hospitals? Which is the most and the least contributing factor for the same?
+
+```{r Spider Chart, echo=FALSE, message=FALSE}
+#Pivoting the table into wide form
+cms_pivot <- cms %>% pivot_wider(
+    names_from = HCAHPS.Question,
+    values_from = Patient.Survey.Star.Rating, values_fn = max) 
+
+#Converting the values of the columns into numeric type
+for (i in 2:13){
+  cms_pivot[i] <- as.numeric(as.character(unlist(cms_pivot[i])))
+}
+
+#Renaming columns
+colnames(cms_pivot) <- c("Facility.Name", "Summary_star_rating", "Cleanliness", "Nurse_communication", "Doc_communication", "Staff_responsiveness", "Pain_management", "Communication_about_medicines", "Discharge_info", "Care_transition", "Overall_rating", "Quietness", "Recommend_hospital")
+
+#Dropping redundant columns
+cms_pivot <- subset(cms_pivot, select = -c(11, 13))
+
+#Grouping by and summarizing based rating
+cms_new <- cms_pivot %>% group_by(Summary_star_rating) %>% summarize_at(c("Cleanliness", "Nurse_communication", "Doc_communication", "Staff_responsiveness", "Pain_management", "Communication_about_medicines", "Discharge_info", "Care_transition", "Quietness"), mean)
+
+#Plotting the radar chart
+radar_plt <- cms_new %>% ggradar(grid.max=5, grid.label.size = 5,  
+    axis.label.size = 3)   
+radar_plt <- radar_plt + labs(title = "Fig. 3.2 Customer survey responses")
+radar_plt
+```
+
+
+#### Inference 3.2
+A radar chart shows multivariate data of three or more quantitative variables mapped onto an axis. Here we can see the responses of the patients in a survey and correlate them to the overall rating of the hospital. With the 5 lines in the spider chart showing the average of all the hospitals grouped by their ratings, we can observe that cleanliness is the most important factor in a hospital getting a 5 star rating. All of them have nearly a perfect cleanliness rating. On the other hand, pain management is the least contributor to the 5 star rated hospitals and care transition is the most important factor in hospitals getting 1 star ratings.
+
+### Q3.3 What is the composition of values (below, above or same as average) for all the attributes discussed in 3.1
+
+```{r Stacked Bar, echo=FALSE, message=FALSE}
+stacked <- hospitals_gi %>%
+  pivot_longer(cols = 4:10, names_to = "Attributes", values_to = "Attribute_Value") %>%
+  group_by(Attributes, Attribute_Value) %>%
+  summarize(freq=n(), .groups = "drop") %>%
+  drop_na()
+
+p<-ggplot(stacked, aes(x = Attributes, las=2,y = freq, fill = Attribute_Value)
+       ) + 
+  geom_bar(stat = "identity")  +
+scale_fill_manual(values = c("#fde725","#28ae80" , "#440154")) +
+   scale_x_discrete(labels=c("Effectiveness.of.care.national.comparison" = "Effectiveness", "Efficient.use.of.medical.imaging.national.comparison" = "Efficiency medical imaging","Mortality.national.comparison" = "Mortality","Patient.experience.national.comparison" = "Patient Experience", "Readmission.national.comparison" = "Readmission", "Safety.of.care.national.comparison" = "Safety",
+"Timeliness.of.care.national.comparison" = "Timeliness")) + ggtitle("Fig. 3.3 Atrribute value composition") + theme(axis.text.x = element_text(angle = 60))
+
+# Convert the ggplot chart to a Plotly chart with hover information
+ggplotly(p, tooltip = c("x","y","fill"))
+```
+
+
+#### Inference 3.3
+A stacked chart is a form of bar chart that shows the composition and comparison of a few variables, either relative or absolute, over time. Here we can observe how the values of attributes are composed - above, below or same as national average. Most of the hospitals in USA have above average effectiveness while most of them have the worst patient experience and timeliness. On a high level we can conclude that mortality and efficiency medical imaging are more or less same as average for US hospitals.
+
+### Q3.4 How are the 5-star and the 1-star rated hospitals distributed all over USA?
+
+### Fig. 3.4a 5-Star rated Hospitals
+```{r leaflet 5 star, echo=FALSE, message=FALSE}
+tag.map.title <- tags$style(HTML("
+  .leaflet-control.map-title { 
+    transform: translate(-50%,20%);
+    position: fixed !important;
+    left: 50%;
+    text-align: center;
+    padding-left: 10px; 
+    padding-right: 10px; 
+    background: rgba(255,255,255,0.75);
+    font-weight: bold;
+    font-size: 28px;
+    color: black;
+  }
+"))
+
+title <- tags$div(
+  tag.map.title, HTML("Fig. 3.4a 5-Star rated Hospitals")
+) 
+
+#five star rated in USA
+five_star <- hospitals_merge %>%
+  filter(Hospital.overall.rating == 5) %>%
+  drop_na()
+
+star <- iconList(blue = makeIcon("star.png", iconWidth = 25, iconHeight =25))
+
+leaflet(data = five_star) %>%
+  addTiles() %>%
+  addMarkers(~LONGITUDE, ~LATITUDE, popup = ~as.character(BEDS), icon = ~star, label = ~as.character(BEDS)) %>%
+  addControl(title, position = "topleft", className="map-title")
+
+```
+### 1-Star rated Hospitals
+```{r leaflet one star, echo=FALSE, message=FALSE}
+tag.map.title <- tags$style(HTML("
+  .leaflet-control.map-title { 
+    transform: translate(-50%,20%);
+    position: fixed !important;
+    left: 50%;
+    text-align: center;
+    padding-left: 10px; 
+    padding-right: 10px; 
+    background: rgba(255,255,255,0.75);
+    font-weight: bold;
+    font-size: 28px;
+    color: black;
+  }
+"))
+
+title <- tags$div(
+  tag.map.title, HTML("Fig. 3.4b 1-Star rated Hospitals")
+) 
+
+#one star rated in USA
+one_star <- hospitals_merge %>%
+  filter(Hospital.overall.rating == 1) %>%
+  drop_na()
+
+icon <- iconList(blue = makeIcon("redicon.png", iconWidth = 24, iconHeight =32))
+
+leaflet(data = one_star) %>%
+  addTiles() %>%
+  addMarkers(~LONGITUDE, ~LATITUDE, popup = ~as.character(BEDS), icon = ~icon, label = ~as.character(BEDS)) %>%
+  addControl(title, position = "topleft", className="map-title")
+
+```
+
+#### Inference 3.4
+It is evident from both the leaflet charts that most of the five star rated hospitals are scattered throughout the central-east region of America with most of the concentration being in Illinois and the least being on the west coast, with only one hospital having 5-star rating (located in Santa Barbara). On the other hand, the one star rated hospitals are also evenly distributed with most of them located in New York and California.
+
+## Conclusion
+The distribution of hospitals across the states in the United States is not even, and there are a number of factors that influence the number of hospitals in a particular state. Some of the factors include population size and density, socioeconomic status, rural versus urban location, and access to healthcare resources.
+We found that in Texas, the states with the largest number of hospitals are Texas, California, and Florida. Other states with a less numbers of hospitals include Wyoming, and Alaska.
+The ownership structure of hospitals in the United States is diverse and can include various types of entities such as non-profit organizations, government entities, for-profit corporations, and partnerships. 
+There are a significant number of privately owned hospitals in Texas, and Florida.
+Next, the largest types of hospitals in the US are non-Profit. These hospitals focus on serving their communities and providing medical care to patients in need, regardless of their ability to pay. The State of California, Florida, and Ohio have hospitals mostly owned by NON-Profit Organization.
+Texas has a large number of hospitals, particularly in its major cities such as Houston and Dallas.These cities are the home to some of the largest medical centers in the world. These medical centers offer a wide range of services, from routine care to specialized treatments for complex medical conditions.
+
+In the second section, we explored whom the hospitals belong to and what are the resources they provide. Firstly, we looked at the different types of hospitals and their distribution across the country: 61.7% of the hospitals in USA belong to the General Acute Care type, while the Chronic Disease type hospitals are least in number in USA with only a share of 0.217% of the total population. The stacked area graph then shows the distribution of hospitals by ownership and their capacity. We infer that the hospitals that are owned by non-profit organizations and state governments have the most number of beds in the country. Thirdly, we have a scatter plot to compare the population density of each state with the number of beds. From the plot it is evident that the state of Texas has the highest hospital to population density ratio while New Jersey has the lowest hospital count to population density ratio. This shows us that New Jersey needs to invest more in building hospitals to improve this ratio. Finally, the bubble chart shows us something similar- the number of beds vs the population density statewise. Again we can see that Texas has the most number of beds for the population density of Texas.
+
+The third section focuses on the quality of the hospitals. We take into consideration the overall rating of the hospitals & the attributes/factors that are obtained from the hospitals_general_info data set and the customer reviews from the cms data set. The alluvial chart shows us that almost all attributes contribute equally to the overall rating, with the Readmission contributing the most. From the radar chart we can conclude that cleanliness is the most important factor that patients look for and that helps the hospital the most to get a five star rating. Among the attributes, effectiveness for US hospitals is mostly above average while US hospitals have the worst patient experience and timeliness. Lastly, it is observed that most of the 5 star rated hospitals are located in and around the state of Illinois while there is only one 5 star hospital located on the east coast. New York and California have the most 1 star rated hospitals in the US.
+
+Overall, out analysis gives a fair idea about the geographical distribution, the resource availability, and the factors that determine the quality of a hospital.
+
+## References
+
+1. [Provided data set - US Hopsitals](https://www.kaggle.com/datasets/carlosaguayo/usa-hospitals)
+2. [Customer satisfaction data set](9https://www.kaggle.com/datasets/abrambeyer/us-hospital-customer-satisfaction-20162020)
+3. [Hospital General Information data set](https://www.kaggle.com/datasets/thedevastator/hospitals-in-the-united-states-a-comprehensive-d)
+4. [plotly documentation](https://plotly.com/r/basic-charts/)
+5. [leaflet documentation](https://rstudio.github.io/leaflet/)
+6. [Population data set](https://worldpopulationreview.com/states)
+7. [usmap documentation](https://cran.r-project.org/web/packages/usmap/vignettes/mapping.html)
